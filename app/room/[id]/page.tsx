@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { useParams } from 'next/navigation'
-import { supabase } from '@/lib/supabase'
+import { supabase } from '../../../lib/supabase'
 
 export default function RoomPage() {
   const { id: roomId } = useParams()
