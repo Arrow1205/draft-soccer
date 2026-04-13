@@ -12,8 +12,16 @@ export default function HomePage() {
   const createRoom = async () => {
     setIsConnecting(true)
     const newPin = Math.random().toString(36).substring(2, 6).toUpperCase()
-    const { data: room } = await supabase.from('rooms').insert([{ pin_code: newPin }]).select().single()
     
+    // CORRECTION ICI : On force le statut à 'settings' lors de la création
+    const { data: room, error } = await supabase.from('rooms').insert([{ pin_code: newPin, status: 'settings' }]).select().single()
+    
+    if (error) {
+      console.error(error)
+      setIsConnecting(false)
+      return alert("Erreur de connexion à Supabase.")
+    }
+
     if (room) {
       const { data: player } = await supabase.from('players').insert([{ room_id: room.id, player_num: 1 }]).select().single()
       localStorage.setItem('myPlayerId', player.id)
@@ -25,10 +33,12 @@ export default function HomePage() {
     if(pin.length !== 4) return alert("Le PIN doit faire 4 caractères.")
     setIsConnecting(true)
     const { data: room } = await supabase.from('rooms').select('*').eq('pin_code', pin.toUpperCase()).single()
+    
     if (room) {
       const { data: player } = await supabase.from('players').insert([{ room_id: room.id, player_num: 2 }]).select().single()
       localStorage.setItem('myPlayerId', player.id)
-      await supabase.from('rooms').update({ status: 'tactic' }).eq('id', room.id)
+      
+      // CORRECTION ICI : On ne change PLUS le statut ici. C'est l'hôte qui le changera après avoir choisi le budget !
       router.push(`/room/${room.id}`)
     } else {
       setIsConnecting(false)
@@ -51,7 +61,7 @@ export default function HomePage() {
           disabled={isConnecting}
           className="w-full bg-gradient-to-r from-blue-600 to-cyan-600 hover:from-blue-500 hover:to-cyan-500 text-white p-4 rounded-xl font-bold mb-8 transition-all shadow-[0_0_15px_rgba(59,130,246,0.4)] hover:shadow-[0_0_25px_rgba(59,130,246,0.6)] disabled:opacity-50"
         >
-          {isConnecting ? 'Connexion...' : 'CRÉER UNE PARTIE'}
+          {isConnecting ? 'CRÉATION...' : 'CRÉER UNE PARTIE'}
         </button>
         
         <div className="w-full flex items-center gap-4 mb-8">
@@ -74,7 +84,7 @@ export default function HomePage() {
             disabled={isConnecting || pin.length < 4}
             className="w-full bg-white/10 hover:bg-white/20 border border-white/10 text-white p-4 rounded-xl font-bold transition-all disabled:opacity-50"
           >
-            REJOINDRE LE MATCH
+            {isConnecting ? 'CONNEXION...' : 'REJOINDRE LE MATCH'}
           </button>
         </div>
       </div>
