@@ -51,9 +51,6 @@ export default function RoomPage() {
   
   const isProcessing = useRef(false);
 
-  // ==========================================
-  // 1. ÉCOUTE DE LA BASE DE DONNÉES ET MOTEUR
-  // ==========================================
   useEffect(() => {
     const myId = localStorage.getItem('myPlayerId')
     
@@ -102,7 +99,6 @@ export default function RoomPage() {
               isProcessing.current = false;
           }
 
-          // CORRECTION DU CRASH : On vérifie bien que current_pick n'est pas null avant de lancer les dés !
           if (r.status === 'match' && myPlayer.is_ready && opPlayer.is_ready && myPlayer.current_pick && opPlayer.current_pick) {
               isProcessing.current = true;
               let diceMe = Math.floor(Math.random() * 6) + 1;
@@ -146,10 +142,6 @@ export default function RoomPage() {
     }
   }, [timeLeft, room?.status, me?.quiz_response, me?.id])
 
-  // ==========================================
-  // 2. ACTIONS UTILISATEUR "OPTIMISTES"
-  // ==========================================
-
   const handleBudgetSelect = async (b: number) => {
       setRoom((prev: any) => ({ ...prev, status: 'tactic', budget: b }));
       setMe((prev: any) => ({ ...prev, budget: b }));
@@ -186,33 +178,26 @@ export default function RoomPage() {
       } else {
           let newMeTeam = [...(me.team||[]), me.current_pick];
           let newOpTeam = [...(opponent.team||[]), opponent.current_pick];
-          
           let targetPos = DRAFT_SEQUENCE[nTurn];
           let genericPos = targetPos === "DEF" ? ["DC", "DD", "DG"] : targetPos === "MID" ? ["MC", "MDC", "MOC", "MD", "MG"] : ["BU", "ATT", "AG", "AD"];
           let pool = PLAYERS_DB.filter(p => genericPos.includes(p.pos)).sort(() => 0.5 - Math.random()).slice(0, 5);
-          
           setRoom((prev: any) => ({ ...prev, status: 'drafting', turn_number: nTurn, current_pool: pool, quiz_data: null }));
           setMe((prev: any) => ({ ...prev, team: newMeTeam, budget: me.budget - me.current_pick.value, current_pick: null, quiz_response: null }));
-
           await Promise.all([
-              supabase.from('players').update({ team: newMeTeam, budget: me.budget - me.current_pick.value, current_pick: null, quiz_response: null }).eq('id', me.id),
-              supabase.from('players').update({ team: newOpTeam, budget: opponent.budget - opponent.current_pick.value, current_pick: null, quiz_response: null }).eq('id', opponent.id),
+              supabase.from('players').update({ team: newMeTeam, budget: me.budget - me.current_pick.value, current_pick: null, quiz_response: null, is_ready: false }).eq('id', me.id),
+              supabase.from('players').update({ team: newOpTeam, budget: opponent.budget - opponent.current_pick.value, current_pick: null, quiz_response: null, is_ready: false }).eq('id', opponent.id),
               supabase.from('rooms').update({ status: 'drafting', turn_number: nTurn, current_pool: pool, quiz_data: null }).eq('id', room.id)
           ]);
       }
   }
 
-  // NOUVEAU : Fonction sécurisée pour le lancement du match
   const handleStartMatch = async () => {
+      isProcessing.current = false; // Reset du verrou
       setRoom((prev: any) => ({ ...prev, status: 'match' }));
-      // On remet la variable "prêt" à faux pour tout le monde pour éviter le plantage
       await supabase.from('players').update({ is_ready: false, current_pick: null }).eq('room_id', room.id);
-      await supabase.from('rooms').update({ status: 'match' }).eq('id', room.id);
+      await supabase.from('rooms').update({ status: 'match', match_state: {} }).eq('id', room.id);
   }
 
-  // ==========================================
-  // 3. RENDU UI
-  // ==========================================
   const PageWrapper = ({ children }: { children: React.ReactNode }) => (
     <main className="min-h-screen bg-[#0B0F19] text-slate-200 p-4 flex flex-col relative overflow-hidden">
       <div className="absolute top-2 left-2 z-50 bg-blue-900/80 px-2 py-1 rounded text-[10px] font-bold text-cyan-400 border border-blue-500/30">
@@ -285,13 +270,11 @@ export default function RoomPage() {
   if (room.status === 'drafting') {
       const targetPos = DRAFT_SEQUENCE[room.turn_number];
       const canAffordSomeone = room.current_pool?.some((p: any) => p.value <= me.budget);
-
       return <PageWrapper>
           <div className="flex justify-between items-center bg-[#060913]/80 p-4 rounded-2xl mb-6 border border-white/10 shadow-lg">
               <div><p className="text-cyan-400/60 text-xs font-bold tracking-widest uppercase">Tour {room.turn_number + 1}/11</p><p className="font-black text-xl text-slate-200">RECHERCHE : {targetPos}</p></div>
               <div className="text-right"><p className="text-cyan-400/60 text-xs font-bold tracking-widest uppercase">Budget</p><p className="font-black text-2xl text-emerald-400">{me.budget} M€</p></div>
           </div>
-
           {!me.current_pick ? (
               <>
                   <div className="grid grid-cols-2 gap-4 mb-6">
@@ -304,7 +287,6 @@ export default function RoomPage() {
                           </button>
                       ))}
                   </div>
-
                   {!canAffordSomeone && (
                       <button onClick={() => handleDraftPick({ id: Math.random(), name: "Looser", pos: targetPos, value: 0 })}
                           className="w-full bg-red-900/80 border-2 border-red-500 p-4 rounded-xl text-white font-bold text-xl animate-pulse shadow-[0_0_20px_rgba(239,68,68,0.4)]">
@@ -323,7 +305,6 @@ export default function RoomPage() {
               <p className="text-slate-300">Objectif : <strong className="text-white text-xl">{room.quiz_data.conflict.name}</strong></p>
               <div className="w-full bg-black/50 h-2 rounded-full my-8 overflow-hidden border border-white/5"><div className="bg-gradient-to-r from-red-500 to-orange-400 h-full transition-all" style={{ width: `${(timeLeft / 12) * 100}%` }}></div></div>
               <p className="text-2xl font-light mb-8">{room.quiz_data.question}</p>
-              
               {!me.quiz_response ? (
                   <div className="grid gap-3">
                       {room.quiz_data.answers.map((ans: string) => (
@@ -352,7 +333,6 @@ export default function RoomPage() {
                       <div className="text-sm text-slate-400 mt-1">{opponent?.current_pick?.pos}</div>
                   </div>
               </div>
-
               {me.player_num === 1 ? (
                   <button onClick={handleNextTurn} className="w-full bg-emerald-600 p-4 rounded-xl font-bold text-xl shadow-[0_0_20px_rgba(16,185,129,0.4)]">TOUR SUIVANT ⏩</button>
               ) : (
@@ -370,7 +350,6 @@ export default function RoomPage() {
               <div className="text-center"><p className="text-xs text-slate-400">ADV</p><p className="text-3xl font-black text-red-400">{opponent?.match_score}</p></div>
           </div>
 
-          {/* LE BOUTON POUR PASSER DU TERRAIN AU MODE MATCH */}
           {room.status === 'pitch' && me.player_num === 1 ? (
               <button onClick={handleStartMatch} 
                       className="w-full bg-gradient-to-r from-cyan-500 to-blue-600 p-4 rounded-xl font-black text-xl mb-6 text-white shadow-[0_0_20px_rgba(34,211,238,0.4)]">
@@ -380,7 +359,6 @@ export default function RoomPage() {
               <div className="w-full bg-slate-800 p-4 rounded-xl font-bold mb-6 text-center animate-pulse">L'HÔTE VA LANCER LE MATCH...</div>
           )}
 
-          {/* INDICATION CLAIRE DE CE QU'IL FAUT FAIRE */}
           {room.status === 'match' && (
               <div className="w-full bg-red-900/80 border border-red-500 p-4 rounded-xl font-black text-lg mb-6 text-white text-center animate-pulse shadow-[0_0_15px_rgba(239,68,68,0.5)]">
                   {!me.is_ready ? "SÉLECTIONNE UN JOUEUR POUR LE DUEL !" : "ATTENTE DE L'ADVERSAIRE..."}
@@ -409,6 +387,9 @@ export default function RoomPage() {
 
           <div className="relative bg-[#063319] p-4 rounded-3xl border-2 border-emerald-500/50 min-h-[400px]">
               <p className="text-center font-black text-emerald-400/30 text-2xl tracking-widest mb-6 absolute top-8 left-0 right-0 pointer-events-none">{me.tactic}</p>
+              {me.player_num === 1 && room.status === 'match' && (
+                  <button onClick={() => {isProcessing.current = false; alert("Moteur débloqué !");}} className="absolute bottom-2 right-2 bg-white/10 text-[8px] p-1 rounded opacity-20">FORCE RESET</button>
+              )}
               <div className="grid grid-cols-3 gap-3 relative z-10 mt-12">
                   {me.team?.map((p: any) => {
                       const isUsed = (me.used_players||[]).includes(p.id);
