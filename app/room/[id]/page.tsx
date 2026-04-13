@@ -65,10 +65,8 @@ export default function RoomPage() {
       
       setRoom(r); setMe(myPlayer); setOpponent(opPlayer); setLoading(false);
 
-      // --- MOTEUR DE RÈGLES (GÉRÉ PAR L'HÔTE) ---
       if (myPlayer?.player_num === 1 && !isProcessing.current) {
           
-          // A. Les deux ont choisi à la Draft
           if (r.status === 'drafting' && myPlayer.current_pick && opPlayer.current_pick) {
               isProcessing.current = true;
               if (myPlayer.current_pick.id === opPlayer.current_pick.id) {
@@ -81,7 +79,6 @@ export default function RoomPage() {
               isProcessing.current = false;
           }
 
-          // B. Fin du Quiz
           if (r.status === 'quiz' && myPlayer.quiz_response && opPlayer.quiz_response) {
               isProcessing.current = true;
               let qData = r.quiz_data;
@@ -95,7 +92,7 @@ export default function RoomPage() {
               else winner = Math.random() > 0.5 ? myPlayer : opPlayer;
 
               let loser = winner.id === myPlayer.id ? opPlayer : myPlayer;
-              let loserPlayer = { id: Math.random(), name: "Remplaçant", pos: qData.conflict.pos, value: Math.floor(qData.conflict.value / 2) };
+              let loserPlayer = { id: Math.random(), name: "Looser", pos: qData.conflict.pos, value: 0 };
               
               await Promise.all([
                   supabase.from('players').update({ current_pick: qData.conflict }).eq('id', winner.id),
@@ -105,8 +102,8 @@ export default function RoomPage() {
               isProcessing.current = false;
           }
 
-          // C. Résolution du Match (Lancer de dé)
-          if (r.status === 'match' && myPlayer.is_ready && opPlayer.is_ready) {
+          // CORRECTION DU CRASH : On vérifie bien que current_pick n'est pas null avant de lancer les dés !
+          if (r.status === 'match' && myPlayer.is_ready && opPlayer.is_ready && myPlayer.current_pick && opPlayer.current_pick) {
               isProcessing.current = true;
               let diceMe = Math.floor(Math.random() * 6) + 1;
               let diceOp = Math.floor(Math.random() * 6) + 1;
@@ -123,8 +120,8 @@ export default function RoomPage() {
               let opScore = scoreOp > scoreMe ? (opPlayer.match_score||0) + 1 : (opPlayer.match_score||0);
 
               await Promise.all([
-                  supabase.from('players').update({ is_ready: false, used_players: [...(myPlayer.used_players||[]), myPlayer.current_pick.id], match_score: meScore }).eq('id', myPlayer.id),
-                  supabase.from('players').update({ is_ready: false, used_players: [...(opPlayer.used_players||[]), opPlayer.current_pick.id], match_score: opScore }).eq('id', opPlayer.id),
+                  supabase.from('players').update({ is_ready: false, current_pick: null, used_players: [...(myPlayer.used_players||[]), myPlayer.current_pick.id], match_score: meScore }).eq('id', myPlayer.id),
+                  supabase.from('players').update({ is_ready: false, current_pick: null, used_players: [...(opPlayer.used_players||[]), opPlayer.current_pick.id], match_score: opScore }).eq('id', opPlayer.id),
                   supabase.from('rooms').update({ match_state: newMatchState }).eq('id', r.id)
               ]);
               isProcessing.current = false;
@@ -139,7 +136,6 @@ export default function RoomPage() {
     return () => { supabase.removeChannel(roomSub); supabase.removeChannel(playerSub); }
   }, [roomId])
 
-  // Timer Quiz
   useEffect(() => { if (room?.status === 'quiz') setTimeLeft(12); }, [room?.status])
   useEffect(() => {
     if (room?.status === 'quiz' && timeLeft > 0 && !me?.quiz_response) {
@@ -150,18 +146,13 @@ export default function RoomPage() {
     }
   }, [timeLeft, room?.status, me?.quiz_response, me?.id])
 
-
   // ==========================================
-  // 2. ACTIONS UTILISATEUR "OPTIMISTES" 🚀
-  // (L'écran change tout de suite, sans attendre Supabase)
+  // 2. ACTIONS UTILISATEUR "OPTIMISTES"
   // ==========================================
 
   const handleBudgetSelect = async (b: number) => {
-      // 1. On change l'affichage IMMÉDIATEMENT
       setRoom((prev: any) => ({ ...prev, status: 'tactic', budget: b }));
       setMe((prev: any) => ({ ...prev, budget: b }));
-      
-      // 2. On sauvegarde en arrière-plan
       await supabase.from('rooms').update({ status: 'tactic', budget: b }).eq('id', room.id);
       await supabase.from('players').update({ budget: b }).eq('room_id', room.id);
   }
@@ -211,9 +202,16 @@ export default function RoomPage() {
       }
   }
 
+  // NOUVEAU : Fonction sécurisée pour le lancement du match
+  const handleStartMatch = async () => {
+      setRoom((prev: any) => ({ ...prev, status: 'match' }));
+      // On remet la variable "prêt" à faux pour tout le monde pour éviter le plantage
+      await supabase.from('players').update({ is_ready: false, current_pick: null }).eq('room_id', room.id);
+      await supabase.from('rooms').update({ status: 'match' }).eq('id', room.id);
+  }
 
   // ==========================================
-  // 3. RENDU DE L'INTERFACE LDC
+  // 3. RENDU UI
   // ==========================================
   const PageWrapper = ({ children }: { children: React.ReactNode }) => (
     <main className="min-h-screen bg-[#0B0F19] text-slate-200 p-4 flex flex-col relative overflow-hidden">
@@ -230,7 +228,6 @@ export default function RoomPage() {
 
   if (loading) return <PageWrapper><div className="flex items-center justify-center h-screen"><div className="w-12 h-12 border-4 border-cyan-400 border-t-transparent rounded-full animate-spin"></div></div></PageWrapper>
 
-  // PHASE 0 : ATTENTE
   if (!opponent && room.status === 'settings') {
     return <PageWrapper>
       <div className="text-center mt-20 p-10 bg-white/5 rounded-3xl border border-white/10 shadow-[0_0_30px_rgba(59,130,246,0.15)] backdrop-blur-md">
@@ -242,7 +239,6 @@ export default function RoomPage() {
     </PageWrapper>
   }
 
-  // PHASE 1 : BUDGET
   if (room.status === 'settings' && opponent) {
       if (me.player_num === 1) {
           return <PageWrapper>
@@ -262,7 +258,6 @@ export default function RoomPage() {
       return <PageWrapper><div className="text-center mt-20"><div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto"></div><p className="mt-4">L'hôte configure le match...</p></div></PageWrapper>
   }
 
-  // PHASE 2 : TACTIQUE
   if (room.status === 'tactic') {
       return <PageWrapper>
           <div className="text-center mt-4">
@@ -287,9 +282,10 @@ export default function RoomPage() {
       </PageWrapper>
   }
 
-  // PHASE 3 : DRAFT
   if (room.status === 'drafting') {
       const targetPos = DRAFT_SEQUENCE[room.turn_number];
+      const canAffordSomeone = room.current_pool?.some((p: any) => p.value <= me.budget);
+
       return <PageWrapper>
           <div className="flex justify-between items-center bg-[#060913]/80 p-4 rounded-2xl mb-6 border border-white/10 shadow-lg">
               <div><p className="text-cyan-400/60 text-xs font-bold tracking-widest uppercase">Tour {room.turn_number + 1}/11</p><p className="font-black text-xl text-slate-200">RECHERCHE : {targetPos}</p></div>
@@ -297,21 +293,29 @@ export default function RoomPage() {
           </div>
 
           {!me.current_pick ? (
-              <div className="grid grid-cols-2 gap-4">
-                  {room.current_pool?.map((p: any) => (
-                      <button key={p.id} disabled={p.value > me.budget} onClick={() => handleDraftPick(p)} 
-                              className="bg-gradient-to-b from-[#111827] to-[#060913] border border-white/10 p-4 rounded-2xl disabled:opacity-30 disabled:grayscale hover:border-cyan-400 transition-all relative">
-                          <span className="absolute top-3 right-3 bg-blue-900/80 text-cyan-300 border border-blue-500/50 text-xs px-2 py-1 rounded-md font-bold">{p.pos}</span>
-                          <div className="font-black text-lg mt-8 text-left">{p.name}</div>
-                          <div className="flex justify-between items-end mt-2"><p className="text-red-400 font-bold">{p.value}M</p><div className="text-yellow-400 text-xs tracking-widest">{'★'.repeat(getStars(p.value))}</div></div>
+              <>
+                  <div className="grid grid-cols-2 gap-4 mb-6">
+                      {room.current_pool?.map((p: any) => (
+                          <button key={p.id} disabled={p.value > me.budget} onClick={() => handleDraftPick(p)} 
+                                  className="bg-gradient-to-b from-[#111827] to-[#060913] border border-white/10 p-4 rounded-2xl disabled:opacity-30 disabled:grayscale hover:border-cyan-400 transition-all relative">
+                              <span className="absolute top-3 right-3 bg-blue-900/80 text-cyan-300 border border-blue-500/50 text-xs px-2 py-1 rounded-md font-bold">{p.pos}</span>
+                              <div className="font-black text-lg mt-8 text-left">{p.name}</div>
+                              <div className="flex justify-between items-end mt-2"><p className="text-red-400 font-bold">{p.value}M</p><div className="text-yellow-400 text-xs tracking-widest">{'★'.repeat(getStars(p.value))}</div></div>
+                          </button>
+                      ))}
+                  </div>
+
+                  {!canAffordSomeone && (
+                      <button onClick={() => handleDraftPick({ id: Math.random(), name: "Looser", pos: targetPos, value: 0 })}
+                          className="w-full bg-red-900/80 border-2 border-red-500 p-4 rounded-xl text-white font-bold text-xl animate-pulse shadow-[0_0_20px_rgba(239,68,68,0.4)]">
+                          ⚠️ BUDGET ÉPUISÉ - RECRUTER UN LOOSER (0 M€)
                       </button>
-                  ))}
-              </div>
+                  )}
+              </>
           ) : <div className="text-center p-10"><div className="w-10 h-10 border-4 border-cyan-400 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div><p className="text-slate-400">Attente de l'adversaire...</p></div>}
       </PageWrapper>
   }
 
-  // PHASE 4 (QUIZ)
   if (room.status === 'quiz') {
       return <PageWrapper>
           <div className="bg-[#1A0B0B]/80 border border-red-500/30 rounded-3xl p-8 text-center shadow-[0_0_40px_rgba(239,68,68,0.2)] relative overflow-hidden">
@@ -332,7 +336,6 @@ export default function RoomPage() {
       </PageWrapper>
   }
 
-  // PHASE 5 (RESULTAT)
   if (room.status === 'round_result') {
       return <PageWrapper>
           <div className="text-center mt-10">
@@ -359,7 +362,6 @@ export default function RoomPage() {
       </PageWrapper>
   }
 
-  // PHASE 6 (TERRAIN / MATCH)
   if (room.status === 'pitch' || room.status === 'match') {
       return <PageWrapper>
           <div className="flex justify-between items-center bg-[#060913]/80 p-4 rounded-2xl mb-6 border border-white/10">
@@ -368,9 +370,21 @@ export default function RoomPage() {
               <div className="text-center"><p className="text-xs text-slate-400">ADV</p><p className="text-3xl font-black text-red-400">{opponent?.match_score}</p></div>
           </div>
 
-          {room.status === 'pitch' && (
-              <button onClick={() => supabase.from('rooms').update({ status: 'match' }).eq('id', room.id)} 
-                      className="w-full bg-gradient-to-r from-cyan-500 to-blue-600 p-4 rounded-xl font-black text-xl mb-6 text-white">LANCER LE MATCH</button>
+          {/* LE BOUTON POUR PASSER DU TERRAIN AU MODE MATCH */}
+          {room.status === 'pitch' && me.player_num === 1 ? (
+              <button onClick={handleStartMatch} 
+                      className="w-full bg-gradient-to-r from-cyan-500 to-blue-600 p-4 rounded-xl font-black text-xl mb-6 text-white shadow-[0_0_20px_rgba(34,211,238,0.4)]">
+                  LANCER LE MATCH
+              </button>
+          ) : room.status === 'pitch' && (
+              <div className="w-full bg-slate-800 p-4 rounded-xl font-bold mb-6 text-center animate-pulse">L'HÔTE VA LANCER LE MATCH...</div>
+          )}
+
+          {/* INDICATION CLAIRE DE CE QU'IL FAUT FAIRE */}
+          {room.status === 'match' && (
+              <div className="w-full bg-red-900/80 border border-red-500 p-4 rounded-xl font-black text-lg mb-6 text-white text-center animate-pulse shadow-[0_0_15px_rgba(239,68,68,0.5)]">
+                  {!me.is_ready ? "SÉLECTIONNE UN JOUEUR POUR LE DUEL !" : "ATTENTE DE L'ADVERSAIRE..."}
+              </div>
           )}
 
           {room.match_state?.duel && (
